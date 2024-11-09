@@ -14,6 +14,7 @@ use regex::Regex;
 use std::cmp::Ordering;
 use std::env::{self, consts::EXE_SUFFIX};
 use std::path::{Path, PathBuf};
+use async_trait::async_trait;
 
 /// Maximum number of items to retrieve from S3 API
 const MAX_KEYS: u8 = 100;
@@ -113,13 +114,13 @@ impl ReleaseList {
 
     /// Retrieve a list of `Release`s.
     /// If specified, filter for those containing a specified `target`
-    pub fn fetch(&self) -> Result<Vec<Release>> {
+    pub async fn fetch(&self) -> Result<Vec<Release>> {
         let releases = fetch_releases_from_s3(
             self.end_point,
             &self.bucket_name,
             &self.region,
             &self.asset_prefix,
-        )?;
+        ).await?;
         let releases = match self.target {
             None => releases,
             Some(ref target) => releases
@@ -426,14 +427,15 @@ impl Update {
     }
 }
 
+#[async_trait]
 impl ReleaseUpdate for Update {
-    fn get_latest_release(&self) -> Result<Release> {
+    async fn get_latest_release(&self) -> Result<Release> {
         let releases = fetch_releases_from_s3(
             self.end_point,
             &self.bucket_name,
             &self.region,
             &self.asset_prefix,
-        )?;
+        ).await?;
         let rel = releases
             .iter()
             .max_by(|x, y| match bump_is_greater(&y.version, &x.version) {
@@ -456,13 +458,13 @@ impl ReleaseUpdate for Update {
         }
     }
 
-    fn get_release_version(&self, ver: &str) -> Result<Release> {
+    async fn get_release_version(&self, ver: &str) -> Result<Release> {
         let releases = fetch_releases_from_s3(
             self.end_point,
             &self.bucket_name,
             &self.region,
             &self.asset_prefix,
-        )?;
+        ).await?;
         let rel = releases.iter().find(|x| x.version == ver);
         match rel {
             Some(r) => Ok(r.clone()),
@@ -532,7 +534,7 @@ impl ReleaseUpdate for Update {
 /// filtering assets which don't match the prefix string if provided.
 ///
 /// This will strip the prefix from provided file names, allowing use with subdirectories
-fn fetch_releases_from_s3(
+async fn fetch_releases_from_s3(
     end_point: EndPoint,
     bucket_name: &str,
     region: &Option<String>,
@@ -570,7 +572,7 @@ fn fetch_releases_from_s3(
 
     debug!("using api url: {:?}", api_url);
 
-    let resp = reqwest::blocking::Client::new().get(&api_url).send()?;
+    let resp = reqwest::Client::new().get(&api_url).send().await?;
     if !resp.status().is_success() {
         bail!(
             Error::Network,
@@ -580,7 +582,7 @@ fn fetch_releases_from_s3(
         )
     }
 
-    let body = resp.text()?;
+    let body = resp.text().await?;
     let mut reader = Reader::from_str(&body);
     reader.trim_text(true);
 

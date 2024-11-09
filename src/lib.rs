@@ -127,6 +127,8 @@ fn update() -> Result<(), Box<::std::error::Error>> {
 
 */
 
+#[macro_use]
+extern crate log;
 pub use self_replace;
 pub use tempfile::TempDir;
 
@@ -138,9 +140,7 @@ use std::cmp::min;
 use std::fs;
 use std::io;
 use std::path;
-
-#[macro_use]
-extern crate log;
+use tokio::io::BufReader;
 
 #[macro_use]
 mod macros;
@@ -668,7 +668,7 @@ impl Download {
     ///     * Progress-bar errors
     ///     * Reading from response to `BufReader`-buffer
     ///     * Writing from `BufReader`-buffer to `File`
-    pub fn download_to<T: io::Write>(&self, mut dest: T) -> Result<()> {
+    pub async fn download_to<T: io::Write>(&self, mut dest: T) -> Result<()> {
         use io::BufRead;
         let mut headers = self.headers.clone();
         if !headers.contains_key(header::USER_AGENT) {
@@ -681,10 +681,10 @@ impl Download {
         }
 
         set_ssl_vars!();
-        let resp = reqwest::blocking::Client::new()
+        let resp = reqwest::Client::new()
             .get(&self.url)
             .headers(headers)
-            .send()?;
+            .send().await?;
         let size = resp
             .headers()
             .get(reqwest::header::CONTENT_LENGTH)
@@ -703,40 +703,7 @@ impl Download {
         }
         let show_progress = if size == 0 { false } else { self.show_progress };
 
-        let mut src = io::BufReader::new(resp);
-        let mut downloaded = 0;
-        let mut bar = if show_progress {
-            let pb = ProgressBar::new(size);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(&self.progress_template)
-                    .expect("set ProgressStyle template failed")
-                    .progress_chars(&self.progress_chars),
-            );
-
-            Some(pb)
-        } else {
-            None
-        };
-        loop {
-            let n = {
-                let buf = src.fill_buf()?;
-                dest.write_all(buf)?;
-                buf.len()
-            };
-            if n == 0 {
-                break;
-            }
-            src.consume(n);
-            downloaded = min(downloaded + n as u64, size);
-
-            if let Some(ref mut bar) = bar {
-                bar.set_position(downloaded);
-            }
-        }
-        if let Some(ref mut bar) = bar {
-            bar.finish_with_message("Done");
-        }
+        dest.write_all(resp.bytes().await?.as_ref())?;
         Ok(())
     }
 }

@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::env::consts::{ARCH, OS};
 use std::fs;
 use std::path::PathBuf;
-
+use async_trait::async_trait;
 use crate::{confirm, errors::*, version, Download, Extract, Status};
 
 /// Release asset information
@@ -77,12 +77,13 @@ impl Release {
 }
 
 /// Updates to a specified or latest release
+#[async_trait]
 pub trait ReleaseUpdate {
     /// Fetch details of the latest release from the backend
-    fn get_latest_release(&self) -> Result<Release>;
+    async fn get_latest_release(&self) -> Result<Release>;
 
     /// Fetch details of the release matching the specified version
-    fn get_release_version(&self, ver: &str) -> Result<Release>;
+    async fn get_release_version(&self, ver: &str) -> Result<Release>;
 
     /// Current version of binary being updated
     fn current_version(&self) -> String;
@@ -149,14 +150,14 @@ pub trait ReleaseUpdate {
 
     /// Display release information and update the current binary to the latest release, pending
     /// confirmation from the user
-    fn update(&self) -> Result<Status> {
+    async fn update(&self) -> Result<Status> {
         let current_version = self.current_version();
-        self.update_extended()
+        self.update_extended().await
             .map(|s| s.into_status(current_version))
     }
 
     /// Same as `update`, but returns `UpdateStatus`.
-    fn update_extended(&self) -> Result<UpdateStatus> {
+    async fn update_extended(&self) -> Result<UpdateStatus> {
         let bin_install_path = self.bin_install_path();
         let bin_name = self.bin_name();
 
@@ -172,7 +173,7 @@ pub trait ReleaseUpdate {
         let release = match self.target_version() {
             None => {
                 print_flush(show_output, "Checking latest released version... ")?;
-                let release = self.get_latest_release()?;
+                let release = self.get_latest_release().await?;
                 {
                     println(show_output, &format!("v{}", release.version));
 
@@ -202,7 +203,7 @@ pub trait ReleaseUpdate {
             }
             Some(ref ver) => {
                 println(show_output, &format!("Looking for tag: {}", ver));
-                self.get_release_version(ver)?
+                self.get_release_version(ver).await?
             }
         };
 
@@ -238,7 +239,7 @@ pub trait ReleaseUpdate {
         download.progress_template = self.progress_template();
         download.progress_chars = self.progress_chars();
 
-        download.download_to(&mut tmp_archive)?;
+        download.download_to(&mut tmp_archive).await?;
 
         #[cfg(feature = "signatures")]
         verify_signature(&tmp_archive_path, self.verifying_keys())?;

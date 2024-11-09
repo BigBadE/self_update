@@ -3,7 +3,8 @@ Gitlab releases
 */
 use std::env::{self, consts::EXE_SUFFIX};
 use std::path::{Path, PathBuf};
-
+use async_recursion::async_recursion;
+use async_trait::async_trait;
 use reqwest::{self, header};
 
 use crate::backends::find_rel_next_link;
@@ -149,7 +150,7 @@ impl ReleaseList {
 
     /// Retrieve a list of `Release`s.
     /// If specified, filter for those containing a specified `target`
-    pub fn fetch(self) -> Result<Vec<Release>> {
+    pub async fn fetch(self) -> Result<Vec<Release>> {
         set_ssl_vars!();
         let api_url = format!(
             "{}/api/v4/projects/{}%2F{}/releases",
@@ -157,7 +158,7 @@ impl ReleaseList {
             urlencoding::encode(&self.repo_owner),
             self.repo_name
         );
-        let releases = self.fetch_releases(&api_url)?;
+        let releases = self.fetch_releases(&api_url).await?;
         let releases = match self.target {
             None => releases,
             Some(ref target) => releases
@@ -168,11 +169,12 @@ impl ReleaseList {
         Ok(releases)
     }
 
-    fn fetch_releases(&self, url: &str) -> Result<Vec<Release>> {
-        let resp = reqwest::blocking::Client::new()
+    #[async_recursion]
+    async fn fetch_releases(&self, url: &str) -> Result<Vec<Release>> {
+        let resp = reqwest::Client::new()
             .get(url)
             .headers(api_headers(&self.auth_token)?)
-            .send()?;
+            .send().await?;
         if !resp.status().is_success() {
             bail!(
                 Error::Network,
@@ -183,7 +185,7 @@ impl ReleaseList {
         }
         let headers = resp.headers().clone();
 
-        let releases = resp.json::<serde_json::Value>()?;
+        let releases = resp.json::<serde_json::Value>().await?;
         let releases = releases
             .as_array()
             .ok_or_else(|| format_err!(Error::Release, "No releases found"))?;
@@ -210,7 +212,7 @@ impl ReleaseList {
         Ok(match next_link {
             None => releases,
             Some(link) => {
-                releases.extend(self.fetch_releases(link)?);
+                releases.extend(self.fetch_releases(link).await?);
                 releases
             }
         })
@@ -489,8 +491,9 @@ impl Update {
     }
 }
 
+#[async_trait]
 impl ReleaseUpdate for Update {
-    fn get_latest_release(&self) -> Result<Release> {
+    async fn get_latest_release(&self) -> Result<Release> {
         set_ssl_vars!();
         let api_url = format!(
             "{}/api/v4/projects/{}%2F{}/releases",
@@ -498,10 +501,10 @@ impl ReleaseUpdate for Update {
             urlencoding::encode(&self.repo_owner),
             self.repo_name
         );
-        let resp = reqwest::blocking::Client::new()
+        let resp = reqwest::Client::new()
             .get(&api_url)
             .headers(self.api_headers(&self.auth_token)?)
-            .send()?;
+            .send().await?;
         if !resp.status().is_success() {
             bail!(
                 Error::Network,
@@ -510,11 +513,11 @@ impl ReleaseUpdate for Update {
                 api_url
             )
         }
-        let json = resp.json::<serde_json::Value>()?;
+        let json = resp.json::<serde_json::Value>().await?;
         Release::from_release_gitlab(&json[0])
     }
 
-    fn get_release_version(&self, ver: &str) -> Result<Release> {
+    async fn get_release_version(&self, ver: &str) -> Result<Release> {
         set_ssl_vars!();
         let api_url = format!(
             "{}/api/v4/projects/{}%2F{}/releases/{}",
@@ -523,10 +526,10 @@ impl ReleaseUpdate for Update {
             self.repo_name,
             ver
         );
-        let resp = reqwest::blocking::Client::new()
+        let resp = reqwest::Client::new()
             .get(&api_url)
             .headers(self.api_headers(&self.auth_token)?)
-            .send()?;
+            .send().await?;
         if !resp.status().is_success() {
             bail!(
                 Error::Network,
@@ -535,7 +538,7 @@ impl ReleaseUpdate for Update {
                 api_url
             )
         }
-        let json = resp.json::<serde_json::Value>()?;
+        let json = resp.json::<serde_json::Value>().await?;
         Release::from_release_gitlab(&json)
     }
 
